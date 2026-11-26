@@ -1,0 +1,42 @@
+name: 24/7 Live Stream
+
+# Streams the loop video to YouTube Live around the clock.
+# - Public repo = unlimited free Actions minutes.
+# - One job caps at 6h, so each run streams ~5h30m, then re-dispatches itself
+#   (workflow_dispatch triggered by GITHUB_TOKEN does start a new run).
+# - Cron every 6h is a backstop in case the self-dispatch chain ever breaks.
+# - The loop video lives as a Release asset (loop-v1/loop.mp4), not in the repo.
+# - Stream key is stored as a repo secret: YT_STREAM_KEY (never in code).
+
+on:
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  stream:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    steps:
+      - name: Install ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+
+      - name: Download loop video
+        run: |
+          curl -L -o loop.mp4 "https://github.com/mdekramhossain590-hue/Ytlive/releases/download/loop-v1/loop.mp4"
+          ls -lh loop.mp4
+          ffprobe -v error -show_entries format=duration -of csv=p=0 loop.mp4
+
+      - name: Stream to YouTube
+        run: |
+          timeout 330m ffmpeg -re -stream_loop -1 -i loop.mp4 -c copy -f flv "rtmp://a.rtmp.youtube.com/live2/${{ secrets.YT_STREAM_KEY }}" || true
+
+      - name: Restart next run
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run stream.yml --ref main || true
